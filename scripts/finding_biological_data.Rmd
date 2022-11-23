@@ -1,0 +1,128 @@
+---
+title: "Biological lake data"
+author: "Hanne B Krogstie"
+date: "23.11.2022"
+output: html_notebook
+---
+################################
+
+## About this script
+
+################################
+
+In this script, I want to download, filter and organize available biological data from lakes in Fennoscandia. The goal is to start getting an overview over available material, thereby making it easier to continue planning the different projects of my PhD, including geographical scope, study design and analysis methods.
+
+################################
+
+## Loading required packages
+
+################################
+```{r load packages}
+# Data management
+library(here) # creating code with relative paths (all within the project folder)
+library(rio) # convenience package for data import into R
+library(tidyverse) # collection of packages that are loaded automatically: ggplot2, dplyr, tidyr,readr,purrr,tibble,stringr,forcats
+library(knitr)
+library(readxl) # read and write excel files
+library(writexl)
+
+# Graphics
+library(sciplot) # bargraphs and lineplots
+library(RColorBrewer) # color palettes, especially for nice looking maps
+
+# Spatial files
+library(sf) # spatial package
+library(mapview) # interactive maps
+library(geojsonsf) # converting between geojson and sf
+library(rgdal) # for readOGR etc
+
+```
+
+################################
+
+## Source files and import data
+
+################################
+```{r import data}
+#source("example.R") # for instance, run a setup file
+
+load(file =  here::here("Data","DerivedData","example.rda"))
+
+```
+
+################################
+
+## What data do I want?
+
+################################
+
+Eventually, I would like to look at data collected with several sampling methods, including kick-sampling, grabb-samples and possibly surber samples.
+
+Will choose all data that is collected with either kick-or a surber sample.
+
+Different data sources:
+
+* GBIF: https://www.gbif.org/
+* NTNU University Museum, natron: https://natron.vm.ntnu.no/dataCollection/Login.aspx
+* Swedish data portal: https://miljodata.slu.se/MVM/Search
+* Finnish data portal: https://laji.fi/en 
+
+Norway: Data is easily accessible through GBIF.
+
+Sweden: 
+
+Finland: Data found in the Finnish database can also be found in GBIF, but the metadata is not as good. A problem is a lack of specified sampling method. Makes it more difficult to find whole sampling events which I need if I am to look at communities.
+
+Options:
+
+* I could take a look at the Norwegian dataset first, which can easily be matched against lakes using NVE hydropower polygons (magasins, watercourses, rivers etc).
+* I could choose a selection of taxa to include in a GBIF search, and then try to piece together sampling events via an eventID key. Thic would allow me to get an overview of the total Fennoscandian dataset. Challenge will then be to filter away data which does not belong to lakes (natural and reservoirs). Suggestion is to use the taxa included in the museum benthic invertebrate database as a template.
+
+
+################################
+
+## 1 ) Norwegian kick-data
+
+################################
+
+Using all logical phrases for sampling protocol (Rot, Kick), I see that the NTNU Museum dataset "Freshwater benthic invertebrates ecological collection NTNU University Museum" contains the majority of available occurrences (151388). The second-most useful is far less. I therefore think using sampling protocol as a search term is not very useful.
+
+The Museum dataset: https://gbif.vm.ntnu.no/ipt/resource?r=benthic_invertebrates_biogeographical_mapping_ntnu_university_museum&v=1.570
+
+Taxa included in this dataset: Annelida, Coleoptera, Diptera, Ephemeroptera, Hemiptera, Neuroptera, Odonata, Plecoptera, Trichoptera, Acari, Crustacea, Mollusca and represents more than 450 species.
+
+```{r University Museum invertebrate data}
+
+## Data from Marc
+
+# Should use box and an api, but for now box is not working. Get NTNU box? Or find document on how to do it for free.
+# library(geojsonio)
+# df_bunndyr <- geojsonio::geojson_read(x =  here::here("Data","source_data","Bunndyr.geojson"))
+
+invMuseum_sf <- geojsonsf::geojson_sf(here::here("Data","source_data","Bunndyr.geojson"))
+
+
+```
+
+Visualizing data
+```{r}
+
+mapview::mapView(invMuseum_sf)
+
+
+```
+
+
+
+################################
+
+## 2) Fennoscandian data 
+
+################################
+
+```{r}
+mapview::mapView()
+
+
+```
+

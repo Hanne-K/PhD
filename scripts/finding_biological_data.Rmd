@@ -79,11 +79,11 @@ Options:
 * I could choose a selection of taxa to include in a GBIF search, and then try to piece together sampling events via an eventID key. Thic would allow me to get an overview of the total Fennoscandian dataset. Challenge will then be to filter away data which does not belong to lakes (natural and reservoirs). Suggestion is to use the taxa included in the museum benthic invertebrate database as a template.
 
 
-################################
+##################################
 
-## 1 ) Norwegian kick-data
+## 1 ) Norwegian inevrtebrate data
 
-################################
+##################################
 
 Using all logical phrases for sampling protocol (Rot, Kick), I see that the NTNU Museum dataset "Freshwater benthic invertebrates ecological collection NTNU University Museum" contains the majority of available occurrences (151388). The second-most useful is far less. I therefore think using sampling protocol as a search term is not very useful.
 
@@ -101,6 +101,50 @@ Taxa included in this dataset: Annelida, Coleoptera, Diptera, Ephemeroptera, Hem
 
 invMuseum_sf <- geojsonsf::geojson_sf(here::here("Data","source_data","Bunndyr.geojson"))
 
+```
+
+```{r}
+## Data from GBIF: The museum dataset for Norway
+# GBIF.org (24 November 2022) GBIF Occurrence Download  https://doi.org/10.15468/dl.ee5z42
+download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176466-220831081235567.zip"
+tmpfile <- tempfile()
+tmpdir <- tempdir()
+download.file(download_url,tmpfile)
+occurrences <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+
+## Create a dataframe where each row is one location (based upon lat/long), summarized data
+locations <- occurrences %>% 
+  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
+  dplyr::summarize(
+    N_samplingEvents = length(unique(eventID)),
+    N_taxa = length(unique(scientificName)), # could change to taxonKey?
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", ")) 
+
+## Make location data-frame a spatial object 
+loc_sf <- st_as_sf(locations, coords = c("decimalLongitude","decimalLatitude"), 
+                   crs = 4326, remove = FALSE)
+
+```
+
+NVE data 
+```{r}
+## Data from NVE: Magasin
+# UTM sone 33 (reccommended for the whole of Norway), gdb file, lndsdekkende overlapp, magasiner. WGS84 (UTM). Må bruke lengde, og breddegrader...
+magasin_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_magasin","NVEData","Vannkraft_Magasin.geojson"))
+
+
+# Data from NVE: 
+
 
 ```
 
@@ -109,8 +153,96 @@ Visualizing data
 
 mapview::mapView(invMuseum_sf)
 
+mapview(loc_sf) + mapview(magasin_sf)
+
 
 ```
+
+Suggestion: I can use a spatial tool to keep all points which are near lakes, either magasines or natural ones. Then from this subset I can divide it into those in magasines and those in natural lakes. I have to think about which data can be used for natural lakes. Some might have other imapct factors which make them unsuitable. Also, need to double check that the magasin file is all for hydropower. Also need to decide what kind of waterbody can be counted as a magasine? Only large natural lakes?
+
+
+## Regulated lakes with data from INH
+
+* Jonsvatnet
+* Fjergen
+* Innsvatnet
+* Veravatnet
+* Lustadvatnet
+* Snåsavatnet
+* Bangsjøen
+* Limingen
+* Øvre Kalvvatnet
+* Øvre Ringvatnet
+* Kalvatnet
+* Unkervatn
+* Elsvatn
+* Krutvatnet
+* Langvatn
+* Isvatnet
+* Storglomvatn
+etc
+
+## Regulated lakes with data from other sources
+
+Some initial research as I look through the map.
+
+* Røssvatnet: NINA (Fiskebiologisk etterundersøkelse i Røsvatn 1997)
+
+
+
+## Downloading invertebrate data from other sources through GBIF.
+
+I will add all orders that are present in the INH dataset. It may give me data from samples that havent included the entire community, but I will then go in afterwards and sort by event ID for instance. Do not know what Acari is, so I omit it for now.
+
+Have put in the selected taxa, and find these possibly relevatn datasets: 
+
+* Norwegian Biodiversity Information Centre - Other datasets (these are not citizen science data, but from other sources like Envir. Agency)
+* Entomology, Oslo (O) UiO
+* NINA insect database
+* Biofokus
+* Entomological collections, UiB
+
+
+Your download is available at the following address:
+https://api.gbif.org/v1/occurrence/download/request/0176632-220831081235567.zip
+
+Citation: GBIF.org (24 November 2022) GBIF Occurrence Download https://doi.org/10.15468/dl.ww44ax
+
+```{r}
+
+download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176632-220831081235567.zip"
+tmpfile <- tempfile()
+tmpdir <- tempdir()
+download.file(download_url,tmpfile)
+occurrences_multiple_datasets <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+
+## Create a dataframe where each row is one location (based upon lat/long), summarized data
+locations_multiDat <- occurrences_multiple_datasets %>% 
+  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
+  dplyr::summarize(
+    N_samplingEvents = length(unique(eventID)),
+    N_taxa = length(unique(scientificName)), # could change to taxonKey?
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", ")) 
+
+## Make location data-frame a spatial object 
+loc_multiDat_sf <- st_as_sf(locations_multiDat, coords = c("decimalLongitude","decimalLatitude"), 
+                   crs = 4326, remove = FALSE, na.fail = FALSE)
+
+
+mapview(loc_multiDat_sf)
+```
+
+
 
 
 

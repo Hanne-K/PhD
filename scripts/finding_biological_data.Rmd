@@ -43,22 +43,8 @@ library(rgdal) # for readOGR etc
 ## Source files and import data
 
 ################################
-```{r import data}
-#source("example.R") # for instance, run a setup file
 
-load(file =  here::here("Data","DerivedData","example.rda"))
-
-```
-
-################################
-
-## What data do I want?
-
-################################
-
-Eventually, I would like to look at data collected with several sampling methods, including kick-sampling, grabb-samples and possibly surber samples.
-
-Will choose all data that is collected with either kick-or a surber sample.
+Eventually, I would like to look at data collected with several sampling methods, including kick-sampling, grabb-samples and possibly surber samples. Will choose all data that is collected with either kick-or a surber sample.
 
 Different data sources:
 
@@ -78,10 +64,31 @@ Options:
 * I could take a look at the Norwegian dataset first, which can easily be matched against lakes using NVE hydropower polygons (magasins, watercourses, rivers etc).
 * I could choose a selection of taxa to include in a GBIF search, and then try to piece together sampling events via an eventID key. Thic would allow me to get an overview of the total Fennoscandian dataset. Challenge will then be to filter away data which does not belong to lakes (natural and reservoirs). Suggestion is to use the taxa included in the museum benthic invertebrate database as a template.
 
+################################
+
+## 1) NVE data
+
+################################
+
+### NVE data: magasin and innsjø 
+```{r}
+## Data from NVE: Magasin
+# UTM sone 33 (reccommended for the whole of Norway), geojson file, lndsdekkende overlapp, magasiner. WGS84 (UTM) with lat long.
+magasin_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_magasin","NVEData","Vannkraft_Magasin.geojson"))
+
+## Data from NVE: innsjødatabase
+innsjo_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_innsjo","NVEData","Innsjo_Innsjo.geojson"))
+
+# Change to projected coordinates
+magasin_sf_P <- sf::st_transform(magasin_sf, 32633)
+innsjo_sf_P <- sf::st_transform(innsjo_sf, 32633)
+
+```
+
 
 ##################################
 
-## 1 ) Norwegian inevrtebrate data
+## 2 ) Norwegian invertebrate data
 
 ##################################
 
@@ -91,29 +98,238 @@ The Museum dataset: https://gbif.vm.ntnu.no/ipt/resource?r=benthic_invertebrates
 
 Taxa included in this dataset: Annelida, Coleoptera, Diptera, Ephemeroptera, Hemiptera, Neuroptera, Odonata, Plecoptera, Trichoptera, Acari, Crustacea, Mollusca and represents more than 450 species.
 
+## Downloading datasets 
+
+### Data from Marc
+Should use box and an api, but for now box is not working. Get NTNU box? Or find document on how to do it for free.
 ```{r University Museum invertebrate data}
-
-## Data from Marc
-
-# Should use box and an api, but for now box is not working. Get NTNU box? Or find document on how to do it for free.
-# library(geojsonio)
-# df_bunndyr <- geojsonio::geojson_read(x =  here::here("Data","source_data","Bunndyr.geojson"))
-
+## Load data
 invMuseum_sf <- geojsonsf::geojson_sf(here::here("Data","source_data","Bunndyr.geojson"))
+
+# Change to projected coordinates
+st_crs(invMuseum_sf) # check current
+invMuseum_sf_P <- sf::st_transform(invMuseum_sf, 32633) # set to 33N projected WGS84
+
+## Filter all points more than 50m from lakes
+filteredMuseum_sf_P <- sf::st_filter(invMuseum_sf_P, innsjo_sf_P,.pred = st_is_within_distance(dist = 50)) 
+
+mapview(filteredMuseum_sf_P)
 
 ```
 
+### Data from GBIF: NTNU University Museum
 ```{r}
 ## Data from GBIF: The museum dataset for Norway
 # GBIF.org (24 November 2022) GBIF Occurrence Download  https://doi.org/10.15468/dl.ee5z42
 download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176466-220831081235567.zip"
 tmpfile <- tempfile()
 tmpdir <- tempdir()
+getOption('timeout')
+options(timeout = 500)
 download.file(download_url,tmpfile)
 occurrences <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
 
 ## Create a dataframe where each row is one location (based upon lat/long), summarized data
 locations <- occurrences %>% 
+  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
+   dplyr::summarize(
+    DatasetName = paste0(unique(datasetName), collapse = ", "),
+    DatasetID = paste0(unique(datasetID), collapse = ", "),
+    DatasetKey = paste0(unique(datasetID), collapse = ", "),
+    N_occurrences = length(unique(occurrenceID)),
+    N_samplingEvents = length(unique(eventID)),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    N_taxa = length(unique(scientificName)), # could change to taxonKey?
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", "),
+    dataset = paste0(unique(datasetName), collapse = ", ")) 
+
+# Make dataframe
+locations <- as.data.frame(locations) 
+## Make location data-frame a spatial object 
+loc_sf <- st_as_sf(locations, coords = c("decimalLongitude","decimalLatitude"), 
+                   crs = 4326, remove = FALSE)
+# Create a version with projected coordinates
+loc_sf_P <- sf::st_transform(loc_sf, 32633)
+```
+
+Spatial filtering
+```{r}
+## Check that both layers have the same crs
+st_crs(loc_sf_P) # WGS 84 / UTM zone 33N
+st_crs(innsjo_sf_P) # WGS 84 / UTM zone 33N
+
+## Filter 50 meters
+df_1 <- sf::st_filter(loc_sf_P, innsjo_sf_P, .predicate = st_is_within_distance,dist = 50) # get all points within 50 meters from lakes
+
+## Filter 5 meters
+
+## Filter within lake polygons
+  
+
+```
+
+## Downloading invertebrate data from other sources through GBIF.
+
+I will add all orders that are present in the INH dataset. It may give me data from samples that havent included the entire community, but I will then go in afterwards and sort by event ID for instance. Do not know what Acari is, so I omit it for now.
+
+Have put in the selected taxa, and find these possibly relevant datasets: 
+
+* Norwegian Biodiversity Information Centre - Other datasets (these are not citizen science data, but from other sources like Envir. Agency)
+* Entomology, Oslo (O) UiO
+* NINA insect database
+* Biofokus
+* Entomological collections, UiB
+
+
+Your download is available at the following address:
+https://api.gbif.org/v1/occurrence/download/request/0176632-220831081235567.zip
+Citation: GBIF.org (24 November 2022) GBIF Occurrence Download https://doi.org/10.15468/dl.ww44ax
+
+### Download multiple datasets
+```{r}
+## Download
+download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176632-220831081235567.zip"
+tmpfile <- tempfile()
+tmpdir <- tempdir()
+options(timeout = 500)
+download.file(download_url,tmpfile)
+occurrences_mDat <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+
+## Group by locality
+locations_mDat <- occurrences_mDat %>% 
+  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
+   dplyr::summarize(
+    datasetName = paste0(unique(datasetName), collapse = ", "),
+    publisher = paste0(unique(publisher), collapse = ", "),
+    DatasetID = paste0(unique(datasetID), collapse = ", "),
+    DatasetKey = paste0(unique(datasetID), collapse = ", "),
+    N_occurrences = length(unique(occurrenceID)),
+    N_samplingEvents = length(unique(eventID)),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    N_taxa = length(unique(scientificName)), # could change to taxonKey?
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", ")) 
+
+# Make dataframe
+locations_mDat <- as.data.frame(locations_mDat) 
+## Make location data-frame a spatial object 
+loc_mDat_sf <- st_as_sf(locations_mDat, coords = c("decimalLongitude","decimalLatitude"), 
+                   crs = 4326, remove = FALSE, na.fail = FALSE)
+# Create a version with projected coordinates
+loc_mDat_sf_P <- sf::st_transform(loc_mDat_sf, 32633)
+
+```
+
+# Spatial filtering: magasin
+loc_mDat has 53101 observations.
+```{r}
+## Filter: Keep points within 50m from magasin polygons
+mDat_mag_50m <- sf::st_filter(loc_mDat_sf_P, magasin_sf_P,.pred = st_is_within_distance(dist = 50))
+  # get all points within 50 meters from magasines, 678 observations
+
+mDat_mag_5m <- sf::st_filter(loc_mDat_sf_P, magasin_sf_P,.pred = st_is_within_distance(dist = 5)) 
+  # 678 observations
+
+mDat_mag_within <- sf::st_filter(loc_mDat_sf_P, magasin_sf_P,.pred = st_contains) 
+  # 678
+
+mapview(mDat_mag_within) + mapview(magasin_sf_P)
+
+mDat_mag_5000m <- sf::st_filter(loc_mDat_sf_P, magasin_sf_P,.pred = st_is_within_distance(dist = 5000))
+  # get all points within 50 meters from magasines, 678 observations
+
+```
+
+## Summary of datasets
+```{r}
+
+df_mag_summary <- mDat_mag_5m %>% dplyr::group_by(publisher,datasetName) %>%
+  dplyr::summarise(N_events = sum(N_samplingEvents))
+
+```
+
+
+
+
+# Spatial filtering: lake
+```{r}
+## Filter: Keep points within 50m from lake polygons
+mDat_50m <- sf::st_filter(loc_mDat_sf_P, innsjo_sf_P,.pred = st_is_within_distance(dist = 50)) 
+  # get all points within 50 meters from lakes
+  # 2641 localities
+
+mDat_5m <- sf::st_filter(loc_mDat_sf_P, innsjo_sf_P,.pred = st_is_within_distance(dist = 5)) 
+
+mDat_within <- sf::st_filter(loc_mDat_sf_P, innsjo_sf_P,.pred = st_contains) 
+
+mapview(mDat_within) + mapview(innsjo_sf_P)
+  
+# Remove geometry
+# st_drop_geometry(multiDat_50m)
+
+# Overview dataframe
+df_multiDat_50m <- multiDat_50m %>% dplyr::group_by(publisher,datasetName) %>%
+  dplyr::summarise(DatasetID = paste0(unique(datasetID), collapse = ", "),
+                   DatasetKey = paste0(unique(datasetID), collapse = ", "),
+                   N_occurrences = length(unique(occurrenceID)),
+                   first_year = min(year),
+                   last_year = max(year),
+                   months = paste0(unique(month), collapse = ", "),
+                   orders = paste0(unique(order), collapse = ", "),
+                   localities = paste0(unique(locality), collapse = ", ")
+                   ) 
+
+# Other summary dataframe for mapview inspection
+df_multiDat_50m_2 <- multiDat_50m %>% dplyr::group_by(locality,decimalLatitude,decimalLongitude) %>%
+  dplyr::summarise(DatasetID = paste0(unique(datasetID), collapse = ", "),
+                   DatasetKey = paste0(unique(datasetID), collapse = ", "),
+                   N_occurrences = length(unique(occurrenceID)),
+                   N_events = length(unique(eventID)),
+                   first_year = min(year),
+                   last_year = max(year),
+                   months = paste0(unique(month), collapse = ", "),
+                   orders = paste0(unique(order), collapse = ", ")
+                   ) 
+mapview(df_multiDat_50m_2)
+
+```
+
+## Filtering with 5 meter distance to lakes
+```{r}
+# Now try to filter by distance to lakes
+multiDat_5m <- sf::st_filter(loc_multiDat_sf_P, innsjo_sf_P,.pred = st_is_within_distance(dist = 5)) # get all points within 5 meters from lakes
+  # The same number of observations as with 50 meters. Hmm
+
+
+multiDat_within <- sf::st_filter(loc_multiDat_sf_P, innsjo_sf_P,.pred = st_contains) # get all points within 5 meters from lakes
+
+mapview(multiDat_within)
+ 
+```
+
+
+
+
+```{r}
+## Create a dataframe where each row is one location (based upon lat/long), summarized data
+locations_multiDat <- occurrences_multiple_datasets %>% 
   dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
   dplyr::summarize(
     N_samplingEvents = length(unique(eventID)),
@@ -128,32 +344,26 @@ locations <- occurrences %>%
     N_months = length(unique(month)),
     months = paste0(unique(month), collapse = ", "),
     locationIDs = paste(unique(locationID), collapse=", "),
-    field_number = paste0(unique(fieldNumber), collapse = ", ")) 
+    field_number = paste0(unique(fieldNumber), collapse = ", "),
+    dataset = paste0(unique(datasetName), collapse = ", ")) 
 
 ## Make location data-frame a spatial object 
-loc_sf <- st_as_sf(locations, coords = c("decimalLongitude","decimalLatitude"), 
-                   crs = 4326, remove = FALSE)
+loc_multiDat_sf <- st_as_sf(locations_multiDat, coords = c("decimalLongitude","decimalLatitude"), 
+                   crs = 4326, remove = FALSE, na.fail = FALSE)
+# Transform to projected coords
+loc_multiDat_sf_P <- sf::st_transform(loc_multiDat_sf, 32633)
+
+# df_1 <- sf::st_filter(loc_multiDat_sf_P, magasin_sf_P,.pred = st_is_within_distance(dist = 50)) # get all points within 50 meters from lakes
 
 ```
 
-NVE data 
-```{r}
-## Data from NVE: Magasin
-# UTM sone 33 (reccommended for the whole of Norway), gdb file, lndsdekkende overlapp, magasiner. WGS84 (UTM). Må bruke lengde, og breddegrader...
-magasin_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_magasin","NVEData","Vannkraft_Magasin.geojson"))
 
-
-# Data from NVE: 
-
-
-```
-
-Visualizing data
+## Visualizing data
 ```{r}
 
 mapview::mapView(invMuseum_sf)
 
-mapview(loc_sf) + mapview(magasin_sf)
+mapview(loc_sf) + mapview(magasin_sf) + mapview(innsjo_sf)
 
 
 ```
@@ -190,71 +400,96 @@ Some initial research as I look through the map.
 
 
 
-## Downloading invertebrate data from other sources through GBIF.
+################################
 
-I will add all orders that are present in the INH dataset. It may give me data from samples that havent included the entire community, but I will then go in afterwards and sort by event ID for instance. Do not know what Acari is, so I omit it for now.
+## 2) Spatial data filtration 
 
-Have put in the selected taxa, and find these possibly relevatn datasets: 
+################################
 
-* Norwegian Biodiversity Information Centre - Other datasets (these are not citizen science data, but from other sources like Envir. Agency)
-* Entomology, Oslo (O) UiO
-* NINA insect database
-* Biofokus
-* Entomological collections, UiB
+Procedure:
 
-
-Your download is available at the following address:
-https://api.gbif.org/v1/occurrence/download/request/0176632-220831081235567.zip
-
-Citation: GBIF.org (24 November 2022) GBIF Occurrence Download https://doi.org/10.15468/dl.ww44ax
+* Transform to projected coordinates. 
+* Use sf package to filter out all datapoints that are not within x meters from a lake. = lakes subset
+* Filter away all points not within x peters from magasines = magasine subset
+* Then, investigate data: what sampling methods ued, what datasets, what projects? How many sampling events? How many years of data? 
+* What lakes and magasines have data? What year is regulation? Do we have samples before and after?
 
 ```{r}
 
-download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176632-220831081235567.zip"
-tmpfile <- tempfile()
-tmpdir <- tempdir()
-download.file(download_url,tmpfile)
-occurrences_multiple_datasets <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+## Merge museum dataset with the other datasets from GBIF
+locTotal_sf <- dplyr::bind_rows(loc_sf,loc_multiDat_sf)
+# mapview(locTotal_sf)
 
-## Create a dataframe where each row is one location (based upon lat/long), summarized data
-locations_multiDat <- occurrences_multiple_datasets %>% 
-  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
-  dplyr::summarize(
-    N_samplingEvents = length(unique(eventID)),
-    N_taxa = length(unique(scientificName)), # could change to taxonKey?
-    N_methods = length(unique(samplingProtocol)),
-    methods = paste0(unique(samplingProtocol), collapse = ", "),
-    N_yrs = length(unique(year)),
-    years = paste0(unique(year), collapse = ", "),
-    first_year = min(year),
-    last_year = max(year),
-    period_yrs = (last_year - first_year),
-    N_months = length(unique(month)),
-    months = paste0(unique(month), collapse = ", "),
-    locationIDs = paste(unique(locationID), collapse=", "),
-    field_number = paste0(unique(fieldNumber), collapse = ", ")) 
+## Sf filtering, to get an initial overview of available localities.
+# Before filtering, get 56640 observations (localities), after we get 3439 observations
+filtered_sf <- sf::st_filter(locTotal_sf_P, magasin_sf_P,.pred = st_is_within_distance(dist = 50)) # get all points within 50 meters from lakes
 
-## Make location data-frame a spatial object 
-loc_multiDat_sf <- st_as_sf(locations_multiDat, coords = c("decimalLongitude","decimalLatitude"), 
-                   crs = 4326, remove = FALSE, na.fail = FALSE)
+mapview(filtered_sf)
 
+## Add data from REGINE
+#occurrences_rot <- st_join(occurrences_rot,REGINE_sf_P[c("vassdragsnummer","nedborfeltVassdragNrOverordnet")], join = st_within)
 
-mapview(loc_multiDat_sf)
+## Then, create a subset which is near hydropower magasines
+magasin_sf_P <- sf::st_transform(magasin_sf, 32633)
+
+locTotal_magasin_P <-  sf::st_filter(locTotal_sf_P, magasin_sf_P,.pred = st_is_within_distance(dist = 50)) # 947 observations
+head(locTotal_magasin_P)
+
+mapview(magasin_sf_P) + mapview(locTotal_magasin_P)
+
+  
 ```
 
+What are the dominating sampling methods in the datasets?
+```{r}
+
+## University museum data, unfiltered
+print(unique(occurrences$samplingProtocol))
+
+df_INHSampl <- occurrences %>% 
+  dplyr::group_by(samplingProtocol) %>%
+  dplyr::summarise(N_samplingEvents = length(unique(eventID)),
+                   N_taxa = length(unique(scientificName)))
+    
+## Other GBIF datasets, unfiltered
+df_otherSampl <- occurrences_multiple_datasets  %>% 
+  dplyr::group_by(samplingProtocol) %>%
+  dplyr::summarise(N_samplingEvents = length(unique(eventID)),
+                   N_taxa = length(unique(scientificName)))
+  # A bit useless. See clearly that there is a lot of irrelevant samples.
+
+```
+
+## Museum data only
+```{r}
+
+loc_sf_P <- sf::st_transform(loc_sf, 32633)
+
+# Filter
+locINH_sf_P <- sf::st_filter(loc_sf_P, magasin_sf_P,.pred = st_is_within_distance(dist = 50)) # get all points within 50 meters from lakes  
+
+mapview(loc_sf_P)
 
 
+filtered_sfnew <- sf::st_filter(loc_sf, innsjo_sf,.pred = st_is_within_distance(dist = 10)) # get all points within 50 meters from lakes
+
+
+trial <- sf::st_filter(loc_sf_P,magasin_sf_P,.predicate = st_intersects)
+
+```
 
 
 ################################
 
-## 2) Fennoscandian data 
+## Fennoscandian data 
 
 ################################
 
 ```{r}
 mapview::mapView()
 
+gitcreds::gitcreds_get()
 
+gitcreds::gitcreds_set()
 ```
 

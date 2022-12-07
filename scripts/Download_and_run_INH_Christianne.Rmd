@@ -1,0 +1,174 @@
+---
+title: "Download and run INH data - for Christianne"
+output: html_notebook
+---
+
+################################
+
+## About this script
+
+################################
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+Resources:
+
+* Spatial operations: https://geocompr.robinlovelace.net/spatial-operations.html#topological-relations
+
+
+################################
+
+## Loading required packages
+
+################################
+
+```{r load packages}
+# Data management
+library(here) # creating code with relative paths (all within the project folder)
+library(rio) # convenience package for data import into R
+library(tidyverse) # collection of packages that are loaded automatically: ggplot2, dplyr, tidyr,readr,purrr,tibble,stringr,forcats
+library(knitr)
+library(readxl) # read and write excel files
+library(writexl)
+
+# Graphics
+library(sciplot) # bargraphs and lineplots
+library(RColorBrewer) # color palettes, especially for nice looking maps
+
+# Spatial files
+library(sf) # spatial package
+library(mapview) # interactive maps
+library(geojsonsf) # converting between geojson and sf
+library(rgdal) # for readOGR etc
+
+```
+
+################################
+
+## Import data
+
+################################
+
+## 1) NVE data
+
+### NVE data: Magasin
+```{r download NVE data: magasin }
+## Data from NVE: Magasin
+# UTM sone 33 (reccommended for the whole of Norway), geojson file, landsdekkende overlapp, magasiner. WGS84 (UTM) with lat long.
+magasin_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_magasin","NVEData","Vannkraft_Magasin.geojson"))
+
+# Change to projected coordinates
+magasin_sf_P <- sf::st_transform(magasin_sf, 32633)
+
+```
+
+### NVE data: Innsjø
+```{r download NVE data: innsjø }
+## Data from NVE: innsjødatabase
+innsjo_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_innsjo","NVEData","Innsjo_Innsjo.geojson"))
+
+# Change to projected coordinates
+innsjo_sf_P <- sf::st_transform(innsjo_sf, 32633)
+
+```
+
+## 2) Norwegian invertebrate data
+
+### Data from GBIF: NTNU University Museum
+Have chosen to download the entire dataset from INH named "Freshwater benthic invertebrates ecological collection NTNU University Museum". You can read more about the dataset here: https://www.gbif.org/dataset/33591b80-0e31-480c-82ce-2f57211b10e6
+
+```{r GBIF download INH dataset}
+## Data from GBIF: The museum dataset for Norway
+# GBIF.org (24 November 2022) GBIF Occurrence Download  https://doi.org/10.15468/dl.ee5z42
+download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176466-220831081235567.zip"
+tmpfile <- tempfile()
+tmpdir <- tempdir()
+options(timeout = 500) # if you have slow internet like me
+download.file(download_url,tmpfile)
+occurrences <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+
+## Create a dataframe where each row is one location (based upon lat/long), summarized data
+locations <- occurrences %>% 
+  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
+   dplyr::summarize(
+    datasetName = paste0(unique(datasetName), collapse = ", "),
+    publisher = paste0(unique(publisher), collapse = ", "),
+    datasetID = paste0(unique(datasetID), collapse = ", "),
+    datasetKey = paste0(unique(datasetKey), collapse = ", "),
+    N_occurrences = length(unique(occurrenceID)),
+    N_samplingEvents = length(unique(eventID)),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    N_taxa = length(unique(scientificName)), # could change to taxonKey?
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", "),
+    collectionCode = paste0(unique(collectionCode), collapse = ", "),
+    associatedReferences = paste0(unique(associatedReferences), collapse = ", ")
+    ) 
+
+# Make dataframe (to avoid issues with the dplyr data structure later on)
+locations <- as.data.frame(locations) 
+
+## Make location data-frame a spatial object 
+loc_sf <- st_as_sf(locations, coords = c("decimalLongitude","decimalLatitude"), crs = 4326, remove = FALSE)
+# Create a version with projected coordinates (here I specify the code for WGS 84 / UTM zone 33N)
+loc_sf_P <- sf::st_transform(loc_sf, 32633)
+
+st_crs(loc_sf) # can check what projection /coordinate system is used
+
+```
+
+
+################################
+
+## Spatial filtering
+
+################################
+
+Filtering away non-relevant sampling localities using spatial operations. Keeping points within a certain distance to magasins or lakes. 
+
+## Magasin + INH data 
+
+With the projected INH invertebrate dataset.
+
+Select all localities which are within the magasin polygons (believe "st_intersects" chosses all that are completely and partially within).
+```{r}
+## Filter option 1
+loc_INH_mag <- loc_sf_P[magasin_sf_P, , op = st_intersects] 
+  # 269 observations
+  # Problem with this method: does not attach the polygon info to the points
+
+## Filter option 2
+loc_INH_mag2 <- st_intersection(loc_sf_P,magasin_sf_P)
+  # 276 observations, why different number of observations?
+
+```
+
+Create buffers for the water magasin polygons, which results in new polygons equal to the original+an increase of x meters. Here, the polygon dataset needs to be in projected coordinates for the distances to be in meters.
+```{r}
+## Create buffers
+# 5 meters
+mag_buf_5m <- sf::st_buffer(magasin_sf_P,5) # 5 meter buffer
+
+loc_INH_mag_buf_5m <- loc_sf_P[mag_buf_5m, , op = st_intersects] # 293 observations
+
+# 50 meters
+mag_buf_50m <- sf::st_buffer(magasin_sf_P,50) # 50 meter buffer
+
+loc_INH_mag_buf_50m <- loc_sf_P[mag_buf_50m, , op = st_intersects] # 375 observations
+
+```
+
+### Use mapview to visually inspect the data
+```{r}
+## Map of magasin + localities, alpha-regions control transparency of layer.
+mapview(magasin_sf_P, col.regions = "blue", alpha.regions = 0.5) + mapview(loc_INH_mag, col.regions = "orange") 
+
+```
+

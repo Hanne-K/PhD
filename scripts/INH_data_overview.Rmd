@@ -1,0 +1,241 @@
+---
+title: "INH data overview"
+output: html_notebook
+---
+
+################################
+
+## Loading required packages
+
+################################
+
+
+```{r load packages}
+# Data management
+library(here) # creating code with relative paths (all within the project folder)
+library(rio) # convenience package for data import into R
+library(tidyverse) # collection of packages that are loaded automatically: ggplot2, dplyr, tidyr,readr,purrr,tibble,stringr,forcats
+library(knitr)
+library(readxl) # read and write excel files
+library(writexl)
+
+# Graphics
+library(sciplot) # bargraphs and lineplots
+library(RColorBrewer) # color palettes, especially for nice looking maps
+
+# Spatial files
+library(sf) # spatial package
+library(mapview) # interactive maps
+library(geojsonsf) # converting between geojson and sf
+library(rgdal) # for readOGR etc
+
+```
+
+
+################################
+
+## Source files and import data
+
+################################
+
+## 1) NVE data
+
+### NVE data: Magasin
+```{r download NVE data: magasin }
+## Data from NVE: Magasin
+# UTM sone 33 (reccommended for the whole of Norway), geojson file, landsdekkende overlapp, magasiner. WGS84 (UTM) with lat long.
+magasin_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_magasin","NVEData","Vannkraft_Magasin.geojson"))
+
+# Change to projected coordinates
+magasin_sf_P <- sf::st_transform(magasin_sf, 32633)
+
+```
+
+### NVE data: Innsjø
+```{r download NVE data: innsjø }
+## Data from NVE: innsjødatabase
+innsjo_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_innsjo","NVEData","Innsjo_Innsjo.geojson"))
+
+# Change to projected coordinates
+innsjo_sf_P <- sf::st_transform(innsjo_sf, 32633)
+
+```
+
+### Data from GBIF: NTNU University Museum
+```{r GBIF download INH dataset}
+## Data from GBIF: The museum dataset for Norway
+# GBIF.org (24 November 2022) GBIF Occurrence Download  https://doi.org/10.15468/dl.ee5z42
+download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176466-220831081235567.zip"
+tmpfile <- tempfile()
+tmpdir <- tempdir()
+options(timeout = 500)
+download.file(download_url,tmpfile)
+occurrences <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+
+## Create a dataframe where each row is one location (based upon lat/long), summarized data
+locations <- occurrences %>% 
+  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
+   dplyr::summarize(
+    datasetName = paste0(unique(datasetName), collapse = ", "),
+    publisher = paste0(unique(publisher), collapse = ", "),
+    datasetID = paste0(unique(datasetID), collapse = ", "),
+    datasetKey = paste0(unique(datasetKey), collapse = ", "),
+    N_occurrences = length(unique(occurrenceID)),
+    N_samplingEvents = length(unique(eventID)),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    N_taxa = length(unique(scientificName)), # could change to taxonKey?
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", "),
+    collectionCode = paste0(unique(collectionCode), collapse = ", "),
+    associatedReferences = paste0(unique(associatedReferences), collapse = ", ")
+    ) 
+
+# Make dataframe
+locations <- as.data.frame(locations) 
+
+## Make location data-frame a spatial object 
+loc_sf <- st_as_sf(locations, coords = c("decimalLongitude","decimalLatitude"), crs = 4326, remove = FALSE)
+# Create a version with projected coordinates
+loc_sf_P <- sf::st_transform(loc_sf, 32633)
+# Check crs
+st_crs(loc_sf)
+
+```
+
+################################
+
+## Spatial filtering
+
+################################
+
+## Magasin + INH data 
+
+With the projected INH invertebrate dataset.
+
+Trying a new method
+```{r}
+
+# Magasiner: magasin_sf_P
+
+# Buffer
+
+# Creating two TRUE/FALSE vectors telling us if the corresponding loc element is in eac set of polygons.
+buff <- lengths(st_intersects(loc_sf_P,mag_buf_5m)) > 0
+magasins <- lengths(st_intersects(loc_sf_P,magasin_sf_P)) > 0 
+
+# It then follows
+only_buff <- buff & !magasins
+outside_buff <- !buff
+
+within_magasins <- loc_sf_P %>% filter(magasins) # 269
+within_5m_buffer <- loc_sf_P %>% filter(buff & !magasins)
+outside_5m_buffer <- loc_sf_P %>% filter(!buff)
+
+# Plotting the wanted selection
+mapview(within_magasins, col.regions = "red") + mapview(within_5m_buffer, col.regions = "pink", alpha = 0.5) + mapview(outside_5m_buffer, col.regions = "grey", alpha = 0.2) + mapview(magasin_sf_P, col.regions = "blue", alpha = 0.5)
+
+```
+
+Want to attach info from the overlapping polygon to the point, allowing us to sum up info on number of points etc per hydropower magasine. 
+```{r}
+## Sampling localities
+loc_sf_P
+
+## Magasin polygons
+magasin_sf_P
+
+## Add info from polygons to relevant points, and create subset
+# Points within polygons
+loc_INH_mag_unfiltered <- st_join(loc_sf_P,magasin_sf_P, join = st_intersects, largest = TRUE) # largest = TRUE makes sure no extra rows with NAs are added to the dataframe
+loc_INH_mag <- loc_INH_mag_unfiltered[magasin_sf_P, , op = st_intersects] # 269 observations within polygons, with polygon info added.
+
+
+## Points within polygons and 5m buffer
+mag_buf_5m <- sf::st_buffer(magasin_sf_P,5) # 5 meter buffer
+loc_INH_mag_buf_5m_unfiltered <-  st_join(loc_sf_P,mag_buf_5m, join = st_intersects, largest = TRUE) # add info
+loc_INH_mag_buf_5m <- loc_INH_mag_buf_5m_unfiltered[mag_buf_5m, , op = st_intersects] # filter, get 293 observations
+
+
+## Points only within the 5m buffer
+# Creating two TRUE/FALSE vectors telling us if the corresponding loc element is in eac set of polygons.
+buff <- lengths(st_intersects(loc_sf_P,mag_buf_5m)) > 0
+magasins <- lengths(st_intersects(loc_sf_P,magasin_sf_P)) > 0 
+# Filter, keep only localities within the buffer zone
+within_mag_buf_5m <- loc_INH_mag_buf_5m_unfiltered %>% filter(buff & !magasins)
+
+```
+
+Mapview
+```{r}
+mapview(within_5m_buffer) + mapview(magasin_sf_P)
+
+```
+
+What localities do we find within 50 meters from magasines?
+Present this data in a summary table.
+```{r}
+
+## Points within polygons and 50m buffer
+mag_buf_50m <- sf::st_buffer(magasin_sf_P,50) # 50 meter buffer
+loc_INH_mag_buf_50m_unfiltered <-  st_join(loc_sf_P,mag_buf_50m, join = st_intersects, largest = TRUE) # add info
+loc_INH_mag_buf_50m <- loc_INH_mag_buf_5m_unfiltered[mag_buf_50m, , op = st_intersects] # filter, get 375 observations
+
+## Summary dataframe
+
+
+```
+
+```{r}
+magasin_liste <- c("decimalLatitude","decimalLongitude","elvenavnHierarki","magasinformal_Liste","status","magasinNr","magasinNavn","idriftsattAar","elvenavnHierarki")
+
+occ_INH_mag_50m <- dplyr::inner_join(occurrences,loc_INH_mag_buf_50m[c("decimalLatitude","decimalLongitude","magasinNavn")], by = c("decimalLatitude","decimalLongitude"))
+
+# occ_INH_mag_50m <- st_drop_geometry(occ_INH_mag)
+## Event dataframe
+
+# Summary table for occurrences; sum up the info we have for each magasine polygon.
+str(occ_INH_mag_50m)
+
+
+## Locality dataframe (a bit redundant, could just look at the loc_INH_mag - and double check coordinate crs)
+# Summarizing
+locality_INH_mag <- occ_INH_mag  %>% 
+  dplyr::group_by(locality,decimalLatitude,decimalLongitude) %>%
+  dplyr::summarize(
+    N_samplingEvents = length(unique(eventID)),
+    N_taxa = length(unique(scientificName)), # change to taxonKey?
+    N_individuals = sum(individualCount),
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", "))
+```
+
+
+
+
+
+Then, if needed, we can get all occurrences that we are interested in. Use the lat/long coordinates for instance to filter out all we want.
+```{r}
+
+```
+
+
+
+
+

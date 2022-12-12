@@ -71,28 +71,28 @@ library(rgdal) # for readOGR etc
 
 ################################
 
-
 ## 1) NVE data
 
-### NVE data: magasin and innsjø 
-```{r download NVE data: magasin and innsjø }
+### NVE data: Magasin
+```{r download NVE data: magasin }
 ## Data from NVE: Magasin
-# UTM sone 33 (reccommended for the whole of Norway), geojson file, lndsdekkende overlapp, magasiner. WGS84 (UTM) with lat long.
+# UTM sone 33 (reccommended for the whole of Norway), geojson file, landsdekkende overlapp, magasiner. WGS84 (UTM) with lat long.
 magasin_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_magasin","NVEData","Vannkraft_Magasin.geojson"))
 
+# Change to projected coordinates
+magasin_sf_P <- sf::st_transform(magasin_sf, 32633)
+
+```
+
+### NVE data: Innsjø
+```{r download NVE data: innsjø }
 ## Data from NVE: innsjødatabase
 innsjo_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_innsjo","NVEData","Innsjo_Innsjo.geojson"))
 
 # Change to projected coordinates
-magasin_sf_P <- sf::st_transform(magasin_sf, 32633)
 innsjo_sf_P <- sf::st_transform(innsjo_sf, 32633)
 
-unique(innsjo_sf$magasinFormal_liste)
-
-mapview(innsjo_sf)
-
 ```
-
 
 ## 2) Norwegian invertebrate data
 
@@ -117,7 +117,6 @@ invMuseum_sf_P <- sf::st_transform(invMuseum_sf, 32633) # set to 33N projected W
 download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176466-220831081235567.zip"
 tmpfile <- tempfile()
 tmpdir <- tempdir()
-getOption('timeout')
 options(timeout = 500)
 download.file(download_url,tmpfile)
 occurrences <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
@@ -148,13 +147,14 @@ locations <- occurrences %>%
     associatedReferences = paste0(unique(associatedReferences), collapse = ", ")
     ) 
 
-## Make dataframe
+# Make dataframe
 locations <- as.data.frame(locations) 
-# Make location data-frame a spatial object 
+
+## Make location data-frame a spatial object 
 loc_sf <- st_as_sf(locations, coords = c("decimalLongitude","decimalLatitude"), crs = 4326, remove = FALSE)
 # Create a version with projected coordinates
 loc_sf_P <- sf::st_transform(loc_sf, 32633)
-
+# Check crs
 st_crs(loc_sf)
 
 ```
@@ -240,18 +240,73 @@ Filtering away non-relevant sampling localities using spatial operations. Keepin
 ## Magasin + INH data 
 
 With the projected INH invertebrate dataset.
-```{r}
-## Create buffers
-mag_buf_5m <- sf::st_buffer(magasin_sf_P,5) # 5 meter buffer
 
+Select all localities which are within the magasin polygons (believe "st_intersects" chooses all that are completely and partially within).
+```{r INH mag intersects}
+## Filter option 1
+loc_INH_mag <- loc_sf_P[magasin_sf_P, , op = st_intersects] 
+  # 269 observations
+  # Problem with this method: does not attach the polygon info to the points
+
+## Filter option 2
+loc_INH_mag2 <- st_intersection(loc_sf_P,magasin_sf_P)
+  # 276 observations, why different number of observations?
+
+
+
+```
+
+Create buffers for the water magasin polygons, which results in new polygons equal to the original+an increase of x meters. Here, the polygon dataset needs to be in projected coordinates for the distances to be in meters.
+
+### 5 meter buffer
+```{r INH mag buffers}
+## Create buffers
+# 5 meters
+mag_buf_5m <- sf::st_buffer(magasin_sf_P,5) # 5 meter buffer
+# Filter option 1
+loc_INH_mag_buf_5m <- loc_sf_P[mag_buf_5m, , op = st_intersects] # 293 observations
+# Filter option 2
+loc_INH_mag_buf_5m_2 <- st_intersection(loc_sf_P,mag_buf_5m) # 300 observations
+
+# Summary table 
+df_1 <- as.data.frame(loc_INH_mag_buf_5m_2) 
+
+# Remove unwanted rows
+df_1 <- df_1 %>% dplyr::filter(status == "D" & magasinFormal_Liste == "Kraftproduksjon")
+
+# Summarise
+df_1 <- df_1 %>% dplyr::group_by(magasinNavn) %>%
+  dplyr::summarise(magasinNavn = paste0(unique(magasinNavn), collapse = ", "),
+                   localities = paste0(unique(locality), collapse = ", "),
+                   N_localities = length(unique(locationIDs)),
+                   magasinFormal_Liste = paste0(unique(magasinFormal_Liste), collapse = ", "),
+                   N_events = sum(N_samplingEvents),
+                   first_year = min(first_year), last_year = max(last_year),
+                   status = paste0(unique(status), collapse = ", "))
+
+mapview(loc_INH_mag_buf_5m_2) + mapview(magasin_sf_P, col.regions = "orange")
+
+```
+
+### 50 meter buffer
+```{r}
+
+# 50 meters
 mag_buf_50m <- sf::st_buffer(magasin_sf_P,50) # 50 meter buffer
 
-## Filter
-loc_INH_mag <- loc_sf_P[magasin_sf_P, , op = st_intersects] # 269 observations
+loc_INH_mag_buf_50m <- loc_sf_P[mag_buf_50m, , op = st_intersects] # 375 observations
+```
 
-# Alternative
-loc_INH_mag_alt <- st_intersection(loc_sf_P,magasin_sf_P)
-mapview(loc_INH_mag_alt, col.regions = "red") + mapview(loc_INH_mag) + mapview(magasin_sf_P)
+
+### Use mapview to visually inspect the data
+```{r}
+## Map of magasin + localities, alpha-regions control transparency of layer.
+mapview(magasin_sf_P, col.regions = "blue", alpha.regions = 0.5) + mapview(loc_INH_mag, col.regions = "orange") 
+
+```
+
+## Summarise the data/create summary tables
+```{r}
 
 # table
 df_mag_alt <- as.data.frame(loc_INH_mag_alt) 
@@ -260,11 +315,14 @@ df_mag_alt2 <- df_mag_alt %>% dplyr::group_by(magasinNavn) %>%
                    localities = paste0(unique(locality), collapse = ", "),
                    magasinFormal_Liste = paste0(unique(magasinFormal_Liste), collapse = ", "))
 
-df1 <- df_mag_alt %>% filter(magasinFormal_Liste == NA)
+
+```
 
 
-  
-unique(df_mag_alt$magasinFormal_Liste)
+```{r}
+
+
+
 
 loc_INH_mag_buf_5m <- loc_sf_P[mag_buf_5m, , op = st_intersects] # 293 observations
 

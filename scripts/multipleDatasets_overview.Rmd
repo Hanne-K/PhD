@@ -61,8 +61,18 @@ innsjo_sf_P <- sf::st_transform(innsjo_sf, 32633)
 
 ```
 
-### Data from GBIF: NTNU University Museum
-```{r GBIF download INH dataset}
+
+
+### Data from GBIF: Multiple datasets
+
+Initial download from GBIF via API. When using this dataset please use the following citation:
+GBIF.org (14 December 2022) GBIF Occurrence Download https://doi.org/10.15468/dl.59hjre
+DOI: https://doi.org/10.15468/dl.59hjre (may take some hours before being active)
+Creation Date: 15:00:41 14 December 2022
+Records included: 722752 records from 15 published datasets
+Compressed data size: 150.3 MB
+Download format: DWCA
+```{r GBIF data download}
 ## Data from GBIF: The museum dataset for Norway
 # GBIF.org (24 November 2022) GBIF Occurrence Download  https://doi.org/10.15468/dl.ee5z42
 download_url <- "https://api.gbif.org/v1/occurrence/download/request/0216182-220831081235567.zip"
@@ -71,6 +81,20 @@ tmpdir <- tempdir()
 options(timeout = 500)
 download.file(download_url,tmpfile)
 occurrences_mDat <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+
+# Save locally
+save(occurrences_mDat, file = here::here("data","source_data","occurrences_mDat.rda"))
+
+```
+
+Load occurrence dataset and create spatial object
+```{r load GBIF file}
+# Load saved file
+load(file =  here::here("data","source_data","occurrences_mDat.rda"))
+
+# Remove rows with missing coordinates
+occurrences_mDat <- occurrences_mDat %>% drop_na(decimalLongitude)
+  # from 722752 to 708289 observations
 
 ## Create a dataframe where each row is one location (based upon lat/long), summarized data
 locations_mDat <- occurrences_mDat %>% 
@@ -98,15 +122,24 @@ locations_mDat <- occurrences_mDat %>%
     associatedReferences = paste0(unique(associatedReferences), collapse = ", ")
     ) 
 
+## Tidy
+# Which rows has missing longitude data?
+# new_DF <- locations_mDat[is.na(locations_mDat$decimalLongitude),]
+  # 1871 observations, will for now just remove these
+
+# Remove rows with missing coordinates (done at occurrence level)
+#locations_mDat <- locations_mDat %>% drop_na(decimalLongitude)
+  # From 50076 observations to 48205, so the 1871 without long lat were removed
+
 # Make dataframe
-locations <- as.data.frame(locations) 
+locations_mDat <- as.data.frame(locations_mDat) 
 
 ## Make location data-frame a spatial object 
-loc_sf <- st_as_sf(locations, coords = c("decimalLongitude","decimalLatitude"), crs = 4326, remove = FALSE)
+loc_mDat_sf <- st_as_sf(locations_mDat, coords = c("decimalLongitude","decimalLatitude"), crs = 4326, remove = FALSE)
 # Create a version with projected coordinates
-loc_sf_P <- sf::st_transform(loc_sf, 32633)
+loc_mDat_sf_P <- sf::st_transform(loc_mDat_sf, 32633)
 # Check crs
-st_crs(loc_sf)
+st_crs(loc_mDat_sf)
 
 ```
 
@@ -117,62 +150,112 @@ st_crs(loc_sf)
 ################################
 
 Want to attach info from the overlapping polygon to the point, allowing us to sum up info on number of points etc per hydropower magasine. 
-```{r}
+
+Within magasine polygons
+```{r within magasines}
 ## Sampling localities
-#loc_sf_P
+#loc_mDat_sf_P
 
 ## Magasin polygons
 #magasin_sf_P
 
 ## Add info from polygons to relevant points, and create subset
 # Points within polygons
-loc_INH_mag_unfiltered <- st_join(loc_sf_P,magasin_sf_P, join = st_intersects, largest = TRUE) # largest = TRUE makes sure no extra rows with NAs are added to the dataframe
-loc_INH_mag <- loc_INH_mag_unfiltered[magasin_sf_P, , op = st_intersects] # 269 observations within polygons, with polygon info added.
+loc_mDat_mag_unfiltered <- st_join(loc_mDat_sf_P,magasin_sf_P, join = st_intersects, largest = TRUE) # largest = TRUE makes sure no extra rows with NAs are added to the dataframe
+loc_mDat_mag <- loc_mDat_mag_unfiltered[magasin_sf_P, , op = st_intersects] # 1413 observations within polygons, with polygon info added.
+```
 
-
+Within 5 meter buffer (which includes the original polygons)
+```{r 5 meter buffer}
 ## Points within polygons and 5m buffer
 mag_buf_5m <- sf::st_buffer(magasin_sf_P,5) # 5 meter buffer
-loc_INH_mag_buf_5m_unfiltered <-  st_join(loc_sf_P,mag_buf_5m, join = st_intersects, largest = TRUE) # add info
-loc_INH_mag_buf_5m <- loc_INH_mag_buf_5m_unfiltered[mag_buf_5m, , op = st_intersects] # filter, get 293 observations
 
+loc_mDat_mag_buf_5m_unfiltered <-  st_join(loc_mDat_sf_P,mag_buf_5m, join = st_intersects, largest = TRUE) # add info
+loc_mDat_mag_buf_5m <- loc_mDat_mag_buf_5m_unfiltered[mag_buf_5m, , op = st_intersects] # filter, get 1555 observations
 
+```
+
+```{r only 5 meter buffer}
 ## Points only within the 5m buffer
 # Creating two TRUE/FALSE vectors telling us if the corresponding loc element is in eac set of polygons.
-buff <- lengths(st_intersects(loc_sf_P,mag_buf_5m)) > 0
-magasins <- lengths(st_intersects(loc_sf_P,magasin_sf_P)) > 0 
+buff <- lengths(st_intersects(loc_mDat_sf_P,mag_buf_5m)) > 0
+magasins <- lengths(st_intersects(loc_mDat_sf_P,magasin_sf_P)) > 0 
 # Filter, keep only localities within the buffer zone
-within_mag_buf_5m <- loc_INH_mag_buf_5m_unfiltered %>% filter(buff & !magasins)
+within_mag_buf_5m <- loc_mDAt_mag_buf_5m_unfiltered %>% filter(buff & !magasins)
 
 ```
 
 
 What localities do we find within 50 meters from magasines?
 Present this data in a summary table.
-```{r}
+```{r 50 meter buffer}
 
 ## Points within polygons and 50m buffer
 mag_buf_50m <- sf::st_buffer(magasin_sf_P,50) # 50 meter buffer
-loc_INH_mag_buf_50m_unfiltered <-  st_join(loc_sf_P,mag_buf_50m, join = st_intersects, largest = TRUE) # add info
-loc_INH_mag_buf_50m <- loc_INH_mag_buf_50m_unfiltered[mag_buf_50m, , op = st_intersects] # filter, get 375 observations
+loc_mDat_mag_buf_50m_unfiltered <-  st_join(loc_mDat_sf_P,mag_buf_50m, join = st_intersects, largest = TRUE) # add info
+loc_mDat_mag_buf_50m <- loc_mDat_mag_buf_50m_unfiltered[mag_buf_50m, , op = st_intersects] # filter, get 2301 observations
 
-## Summary dataframe
+```
 
+
+Summary dataframe for all points within 50 meters from hydropower magasines.
+
+Add magasine info to relevant occurrences
+```{r}
+# Relevant magasine info
+magasin_liste <- c("decimalLatitude","decimalLongitude","elvenavnHierarki","vassdragsnummer","vannkraftverkNavn","vannkraftverkNr","delfeltNr","volumOppdemt_Mm3","magasinFormal_Liste","vatnLnr","magasinNr","hoyesteRegulerteVannstand_moh","lavesteRegulerteVannstand_moh","magasinNavn","magasinArealHRV_km2","status","idriftsattAar")
+
+# Adding the info to all occurrences within the 50 meter buffer
+occ_mDat_mag_50m <- dplyr::inner_join(occurrences_mDat,loc_mDat_mag_buf_50m[magasin_liste], by = c("decimalLatitude","decimalLongitude"))
+```
+
+### Do we have EPT data?
+
+Found from these publisers: 
+[1] "University of Oslo"                                  
+[2] "The Norwegian Biodiversity Information Centre (NBIC)"
+[3] "Norwegian Institute for Nature Research"             
+[4] "Biofokus"                                            
+[5] "University of Bergen"                                
+[6] "UiT The Arctic University of Norway" 
+```{r}
+# Do we have any EPT observations? 
+df_EPT <- occ_mDat_mag_50m %>% filter(order %in% c("Ephemeroptera","Plecoptera","Trichoptera"))
+  # 5664 observations
+# Publishers?
+unique(df_EPT$publisher)
+unique(df_EPT$preparations)
+EPT_preparations <- c("ethanol 70%","Alcohol","ethanol 96%","Ethanol (80 %)")
+
+df_EPT_ethanol <- df_EPT %>% filter(preparations %in% EPT_preparations)
+
+# Where are these?
+
+
+```
+
+Can we find relevant sampling methods?
+```{r}
+# Relevant sampling methods
+unique(occ_mDat_mag_50m$samplingProtocol) # none of the specified methods are relevant...
+df_trial <- occ_mDat_mag_50m %>% filter(samplingProtocol == "")
+  # go from 18807 to 17918 occurrences, loose 899 occurrences - so will use this filter
+  # Know that the specified ones are irrelevant, but the unspecified might also be, need to check later
 
 ```
 
 
 ```{r}
-magasin_liste <- c("decimalLatitude","decimalLongitude","elvenavnHierarki","vassdragsnummer","vannkraftverkNavn","vannkraftverkNr","delfeltNr","volumOppdemt_Mm3","magasinFormal_Liste","vatnLnr","magasinNr","hoyesteRegulerteVannstand_moh","lavesteRegulerteVannstand_moh","magasinNavn","magasinArealHRV_km2","status","idriftsattAar")
-sampling_methods <- c("Rot (5 min)","Rot (1 min)","Grabb van Veen (5x0.02)","Grabb Ekman","Rot (3 min)","Grabb Ekman/ van Veen","Rot (1 min) x 2","Rot (3 min) x 2","Rot (2 min)")
+# Relevant types of magasines
+unique(occ_mDat_mag_50m$magasinFormal_Liste)
+magasintype_liste <- c("Kraftproduksjon","Kraftproduksjon, Rekreasjon, Vannforsyning","Kraftproduksjon, Vannforsyning","Kraftproduksjon, Akvakultur","Kraftproduksjon, Andre")
 
-
-occ_INH_mag_50m <- dplyr::inner_join(occurrences,loc_INH_mag_buf_50m[magasin_liste], by = c("decimalLatitude","decimalLongitude"))
 
 # Summary table for occurrences; sum up the info we have for each magasine polygon.
-df_summary_mag_50m <- occ_INH_mag_50m %>% 
+df_summary_mDat_mag_50m <- occ_mDat_mag_50m %>% 
   filter(status == "D") %>%
-  filter(samplingProtocol %in% sampling_methods) %>%
-  filter(magasinFormal_Liste == "Kraftproduksjon") %>%
+  filter(samplingProtocol == "") %>%
+  filter(magasinFormal_Liste %in% magasintype_liste) %>%
   group_by(magasinNavn) %>%
   summarise(idriftsattAar = paste0(unique(idriftsattAar), collapse = ", "),
             magasinArealHRV_km2 = paste0(unique(magasinArealHRV_km2), collapse = ", "),

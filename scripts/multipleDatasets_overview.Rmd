@@ -1,5 +1,5 @@
 ---
-title: "INH data overview"
+title: "Other invertebrate datasets"
 output: html_notebook
 ---
 
@@ -65,15 +65,15 @@ innsjo_sf_P <- sf::st_transform(innsjo_sf, 32633)
 ```{r GBIF download INH dataset}
 ## Data from GBIF: The museum dataset for Norway
 # GBIF.org (24 November 2022) GBIF Occurrence Download  https://doi.org/10.15468/dl.ee5z42
-download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176466-220831081235567.zip"
+download_url <- "https://api.gbif.org/v1/occurrence/download/request/0216182-220831081235567.zip"
 tmpfile <- tempfile()
 tmpdir <- tempdir()
 options(timeout = 500)
 download.file(download_url,tmpfile)
-occurrences <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+occurrences_mDat <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
 
 ## Create a dataframe where each row is one location (based upon lat/long), summarized data
-locations <- occurrences %>% 
+locations_mDat <- occurrences_mDat %>% 
   dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
    dplyr::summarize(
     datasetName = paste0(unique(datasetName), collapse = ", "),
@@ -116,34 +116,6 @@ st_crs(loc_sf)
 
 ################################
 
-## Magasin + INH data 
-
-With the projected INH invertebrate dataset.
-
-Trying a new method
-```{r}
-
-# Magasiner: magasin_sf_P
-
-# Buffer
-
-# Creating two TRUE/FALSE vectors telling us if the corresponding loc element is in eac set of polygons.
-buff <- lengths(st_intersects(loc_sf_P,mag_buf_5m)) > 0
-magasins <- lengths(st_intersects(loc_sf_P,magasin_sf_P)) > 0 
-
-# It then follows
-only_buff <- buff & !magasins
-outside_buff <- !buff
-
-within_magasins <- loc_sf_P %>% filter(magasins) # 269
-within_5m_buffer <- loc_sf_P %>% filter(buff & !magasins)
-outside_5m_buffer <- loc_sf_P %>% filter(!buff)
-
-# Plotting the wanted selection
-mapview(within_magasins, col.regions = "red") + mapview(within_5m_buffer, col.regions = "pink", alpha = 0.5) + mapview(outside_5m_buffer, col.regions = "grey", alpha = 0.2) + mapview(magasin_sf_P, col.regions = "blue", alpha = 0.5)
-
-```
-
 Want to attach info from the overlapping polygon to the point, allowing us to sum up info on number of points etc per hydropower magasine. 
 ```{r}
 ## Sampling localities
@@ -173,11 +145,6 @@ within_mag_buf_5m <- loc_INH_mag_buf_5m_unfiltered %>% filter(buff & !magasins)
 
 ```
 
-Mapview
-```{r}
-mapview(within_5m_buffer) + mapview(magasin_sf_P)
-
-```
 
 What localities do we find within 50 meters from magasines?
 Present this data in a summary table.
@@ -192,6 +159,7 @@ loc_INH_mag_buf_50m <- loc_INH_mag_buf_50m_unfiltered[mag_buf_50m, , op = st_int
 
 
 ```
+
 
 ```{r}
 magasin_liste <- c("decimalLatitude","decimalLongitude","elvenavnHierarki","vassdragsnummer","vannkraftverkNavn","vannkraftverkNr","delfeltNr","volumOppdemt_Mm3","magasinFormal_Liste","vatnLnr","magasinNr","hoyesteRegulerteVannstand_moh","lavesteRegulerteVannstand_moh","magasinNavn","magasinArealHRV_km2","status","idriftsattAar")
@@ -250,17 +218,5 @@ locality_INH_mag <- occ_INH_mag  %>%
     locationIDs = paste(unique(locationID), collapse=", "),
     field_number = paste0(unique(fieldNumber), collapse = ", "))
 ```
-
-
-
-
-
-Then, if needed, we can get all occurrences that we are interested in. Use the lat/long coordinates for instance to filter out all we want.
-```{r}
-mapview(loc_INH_mag_buf_50m) + mapview(magasin_sf_P)
-```
-
-
-
 
 

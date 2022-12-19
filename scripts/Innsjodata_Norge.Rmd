@@ -1,0 +1,198 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Script for lake polygons, not regulated for hydropower use.
+
+################################
+
+## Loading required packages
+
+################################
+
+
+```{r load packages}
+# Data management
+library(here) # creating code with relative paths (all within the project folder)
+library(rio) # convenience package for data import into R
+library(tidyverse) # collection of packages that are loaded automatically: ggplot2, dplyr, tidyr,readr,purrr,tibble,stringr,forcats
+library(knitr)
+library(readxl) # read and write excel files
+library(writexl)
+
+# Graphics
+library(sciplot) # bargraphs and lineplots
+library(RColorBrewer) # color palettes, especially for nice looking maps
+
+# Spatial files
+library(sf) # spatial package
+library(mapview) # interactive maps
+library(geojsonsf) # converting between geojson and sf
+library(rgdal) # for readOGR etc
+
+```
+
+################################
+
+## Source files and import data
+
+################################
+
+## 1) NVE data
+
+### NVE data: Innsjø
+```{r download NVE data: innsjø }
+## Data from NVE: innsjødatabase
+innsjo_sf <- geojsonsf::geojson_sf(here::here("data","source_data","NVE_innsjo","NVEData","Innsjo_Innsjo.geojson"))
+
+# Change to projected coordinates
+innsjo_sf_P <- sf::st_transform(innsjo_sf, 32633)
+
+```
+
+### Data from GBIF: NTNU University Museum
+```{r GBIF download INH dataset}
+## Data from GBIF: The museum dataset for Norway
+# GBIF.org (24 November 2022) GBIF Occurrence Download  https://doi.org/10.15468/dl.ee5z42
+download_url <- "https://api.gbif.org/v1/occurrence/download/request/0176466-220831081235567.zip"
+tmpfile <- tempfile()
+tmpdir <- tempdir()
+options(timeout = 500)
+download.file(download_url,tmpfile)
+occurrences <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+
+# Save locally
+save(occurrences, file = here::here("data","source_data","occurrences.rda"))
+
+```
+
+```{r}
+# Load saved file
+load(file =  here::here("data","source_data","occurrences.rda"))
+
+## Create a dataframe where each row is one location (based upon lat/long), summarized data
+locations <- occurrences %>% 
+  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
+   dplyr::summarize(
+    datasetName = paste0(unique(datasetName), collapse = ", "),
+    publisher = paste0(unique(publisher), collapse = ", "),
+    datasetID = paste0(unique(datasetID), collapse = ", "),
+    datasetKey = paste0(unique(datasetKey), collapse = ", "),
+    N_occurrences = length(unique(occurrenceID)),
+    N_samplingEvents = length(unique(eventID)),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    N_taxa = length(unique(scientificName)), # could change to taxonKey?
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", "),
+    collectionCode = paste0(unique(collectionCode), collapse = ", "),
+    associatedReferences = paste0(unique(associatedReferences), collapse = ", ")
+    ) 
+
+# Make dataframe
+locations <- as.data.frame(locations) 
+
+## Make location data-frame a spatial object 
+loc_sf <- st_as_sf(locations, coords = c("decimalLongitude","decimalLatitude"), crs = 4326, remove = FALSE)
+# Create a version with projected coordinates
+loc_sf_P <- sf::st_transform(loc_sf, 32633)
+```
+
+
+### Data from GBIF: Multiple datasets
+
+Initial download from GBIF via API. When using this dataset please use the following citation:
+GBIF.org (14 December 2022) GBIF Occurrence Download https://doi.org/10.15468/dl.59hjre
+DOI: https://doi.org/10.15468/dl.59hjre (may take some hours before being active)
+Creation Date: 15:00:41 14 December 2022
+Records included: 722752 records from 15 published datasets
+Compressed data size: 150.3 MB
+Download format: DWCA
+
+```{r GBIF data download}
+## Data from GBIF: The museum dataset for Norway
+# GBIF.org (24 November 2022) GBIF Occurrence Download  https://doi.org/10.15468/dl.ee5z42
+download_url <- "https://api.gbif.org/v1/occurrence/download/request/0216182-220831081235567.zip"
+tmpfile <- tempfile()
+tmpdir <- tempdir()
+options(timeout = 500)
+download.file(download_url,tmpfile)
+occurrences_mDat <- rio::import(unzip(tmpfile,files="occurrence.txt",exdir = tmpdir), encoding = "UTF-8") # on the fly unzip and import to R object 
+
+# Save locally
+save(occurrences_mDat, file = here::here("data","source_data","occurrences_mDat.rda"))
+
+```
+
+Load occurrence dataset and create spatial object
+```{r load GBIF file}
+# Load saved file
+load(file =  here::here("data","source_data","occurrences_mDat.rda"))
+
+# Remove rows with missing coordinates
+occurrences_mDat <- occurrences_mDat %>% drop_na(decimalLongitude)
+  # from 722752 to 708289 observations
+
+## Create a dataframe where each row is one location (based upon lat/long), summarized data
+locations_mDat <- occurrences_mDat %>% 
+  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
+   dplyr::summarize(
+    datasetName = paste0(unique(datasetName), collapse = ", "),
+    publisher = paste0(unique(publisher), collapse = ", "),
+    datasetID = paste0(unique(datasetID), collapse = ", "),
+    datasetKey = paste0(unique(datasetKey), collapse = ", "),
+    N_occurrences = length(unique(occurrenceID)),
+    N_samplingEvents = length(unique(eventID)),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    N_taxa = length(unique(scientificName)), # could change to taxonKey?
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", "),
+    collectionCode = paste0(unique(collectionCode), collapse = ", "),
+    associatedReferences = paste0(unique(associatedReferences), collapse = ", ")
+    ) 
+
+# Make dataframe
+locations_mDat <- as.data.frame(locations_mDat) 
+
+## Make location data-frame a spatial object 
+loc_mDat_sf <- st_as_sf(locations_mDat, coords = c("decimalLongitude","decimalLatitude"), crs = 4326, remove = FALSE)
+# Create a version with projected coordinates
+loc_mDat_sf_P <- sf::st_transform(loc_mDat_sf, 32633)
+
+```
+
+### Merge occurrences dataframes to one file
+```{r}
+# Merge occurrence datasets: INH and mDat
+occurrences_merged <- rbind(occurrences,occurrences_mDat)
+
+# Save locally
+save(occurrences_merged, file = here::here("data","source_data","occurrences_merged.rda"))
+
+```
+
+### Filtering
+```{r}
+# Load saved file
+load(file =  here::here("data","source_data","occurrences_merged.rda"))
+
+
+
+```
+

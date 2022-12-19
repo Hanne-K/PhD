@@ -51,6 +51,25 @@ innsjo_sf_P <- sf::st_transform(innsjo_sf, 32633)
 
 ```
 
+Reduce size of lake polygon dataset.
+```{r}
+# Filter away polygons used for hydro now or previously
+unique(innsjo_sf_P$magasinFormal_liste)
+
+# Remove 
+magasintype_irrelevant <- c("Kraftverk-andre","Kraftproduksjon,Sedimenteringsdam","Andre,Kraftproduksjon","Kraftproduksjon, Oppstuvn.dam/sperred","Flomdempning,Kraftproduksjon","Kraftproduksjon,Rekreasjon","Settefiskanlegg Kraftproduksjon","Kraftproduksjon, Settefisk","Fiskedam, Kraftproduksjon","Kraftproduksjon,Settefiskanlegg","Fiske,Kraftproduksjon,Vannforsyning","Kraftproduksjon,Tidligere fløtning","Kraftproduksjon","Kraftproduksjon,Vannforsyning","Fiske,Kraftproduksjon","Andre, Kraftverk-andre","Krfatproduksjon","Vannforsyningsdam, Kraftproduksjon")
+
+# How small is the smallest regulated lake?
+innsj_kraftprod <- innsjo_sf_P %>% filter(magasinFormal_liste == "Kraftproduksjon") # 0.0007 km2, so will therefore use this as size criteria for comparative lakes.
+
+innsjo_sf_P_reduced <- innsjo_sf_P %>% 
+  dplyr::filter(!(magasinFormal_liste %in% magasintype_irrelevant)) %>%
+  dplyr::filter(arealNorge_km2 >= 0.0007)
+  # The polygon dataframe is reduced from 264 539 polygons to 262 942 polygons.
+
+```
+
+
 ### Data from GBIF: NTNU University Museum
 ```{r GBIF download INH dataset}
 ## Data from GBIF: The museum dataset for Norway
@@ -192,6 +211,105 @@ save(occurrences_merged, file = here::here("data","source_data","occurrences_mer
 # Load saved file
 load(file =  here::here("data","source_data","occurrences_merged.rda"))
 
+# Create a spatial dataframe
+# Remove rows with missing coordinates
+occurrences_merged <- occurrences_merged %>% drop_na(decimalLongitude)
+  
+
+## Create a dataframe where each row is one location (based upon lat/long), summarized data, get 51 743 localities
+locations_merged <- occurrences_merged %>% 
+  dplyr::group_by(locality, decimalLatitude,decimalLongitude) %>%
+   dplyr::summarize(
+    datasetName = paste0(unique(datasetName), collapse = ", "),
+    publisher = paste0(unique(publisher), collapse = ", "),
+    datasetID = paste0(unique(datasetID), collapse = ", "),
+    datasetKey = paste0(unique(datasetKey), collapse = ", "),
+    N_occurrences = length(unique(occurrenceID)),
+    N_samplingEvents = length(unique(eventID)),
+    locationIDs = paste(unique(locationID), collapse=", "),
+    N_taxa = length(unique(scientificName)), # could change to taxonKey?
+    N_methods = length(unique(samplingProtocol)),
+    methods = paste0(unique(samplingProtocol), collapse = ", "),
+    N_yrs = length(unique(year)),
+    years = paste0(unique(year), collapse = ", "),
+    first_year = min(year),
+    last_year = max(year),
+    period_yrs = (last_year - first_year),
+    N_months = length(unique(month)),
+    months = paste0(unique(month), collapse = ", "),
+    field_number = paste0(unique(fieldNumber), collapse = ", "),
+    collectionCode = paste0(unique(collectionCode), collapse = ", "),
+    associatedReferences = paste0(unique(associatedReferences), collapse = ", ")
+    ) 
+
+# Make dataframe
+locations_merged <- as.data.frame(locations_merged) 
+
+## Make location data-frame a spatial object 
+locations_merged_sf <- st_as_sf(locations_merged, coords = c("decimalLongitude","decimalLatitude"), crs = 4326, remove = FALSE)
+# Create a version with projected coordinates
+locations_merged_sf_P <- sf::st_transform(locations_merged_sf, 32633)
+
+```
+
+### Spatial filtering with 50m buffer
+```{r}
+# Create buffer 50m
+## Points within polygons and 50m buffer
+innsjo_buf_50m <- sf::st_buffer(innsjo_sf_P_reduced,50) # 50 meter buffer
+
+write_sf(innsjo_buf_50m,dsn = here::here("data","derived_data","innsjo_buf_50m.shp"))
+
+loc_merged_innsjo_buf_50m_unfiltered <-  st_join(locations_merged_sf_P,innsjo_buf_50m, join = st_intersects, largest = TRUE) # add info
+loc_merged_innsjo_buf_50m <- loc_merged_innsjo_buf_50m_unfiltered[innsjo_buf_50m, , op = st_intersects] # filter, get 7162 observations
+
+# save file
+save(loc_merged_innsjo_buf_50m, file = here::here("data","derived_data","loc_merged_innsjo_buf_50m.rda"))
+
+```
+
+Inspect in mapview
+```{r}
+mapview(loc_merged_innsjo_buf_50m)
+
+```
+
+### Create a summary dataframe
+```{r}
+innsjo_liste <- c("decimalLatitude","decimalLongitude","elvenavnHierarki","magasinKategori","objektType","vassdragsomradeNr","arealNorge_km2","magasinnummer","magasinFormal_liste","navn","vatnLnr","vassdragsnummer","arealInnsjo_km2")
+
+# Adding the info to all occurrences within the 50 meter buffer
+occ_merged_innsjo_50m <- dplyr::inner_join(occurrences_merged,loc_merged_innsjo_buf_50m[innsjo_liste], by = c("decimalLatitude","decimalLongitude"))
+
+# Suggesting to look at only lakes with 4 or more years of data.
+df_years <- df_datasets_innsjo_50m %>% count(N_yrs)
+
+# Create a summary dataframe
+df_innsjoer_50m <- occ_merged_innsjo_50m %>%
+  group_by(navn) %>%
+  summarise(magasinnummer = paste0(unique(magasinnummer), collapse = ", "),
+            arealNorge_km2 = paste0(unique(arealNorge_km2), collapse = ", "),
+            magasinFormal_liste = paste0(unique(magasinFormal_liste), collapse = ", "),
+            vassdragsomradeNr = paste0(unique(vassdragsomradeNr), collapse = ", "),
+            elvenavnHierarki = paste0(unique(elvenavnHierarki), collapse = ", "),
+            publisher = paste0(unique(publisher), collapse = ", "),
+            insititutionCode = paste0(unique(institutionCode), collapse = ", "),
+            collectionCode = paste0(unique(collectionCode), collapse = ", "),
+            N_yrs = length(unique(year)),
+            years = paste0(unique(year), collapse = ", "),
+            first_year = min(year,na.rm = TRUE),
+            last_year = max(year,na.rm = TRUE),
+            LocatityNames = paste0(unique(locality), collapse = ", "),
+            N_locations = length(unique(locationID)),
+            orders = paste0(unique(order), collapse = ", ")
+            )
+
+df_innsjoer_50m <- df_innsjoer_50m %>% 
+  filter(N_yrs >= 4) %>%
+  drop_na(navn)  
+  
+
+write_xlsx(df_innsjoer_50m,here::here("data","derived_data","df_innsjoer_50m_19.12.22.xlsx"))
 
 
 ```

@@ -171,4 +171,3 @@ loc_INH_mag_buf_50m <- loc_sf_P[mag_buf_50m, , op = st_intersects] # 375 observa
 mapview(magasin_sf_P, col.regions = "blue", alpha.regions = 0.5) + mapview(loc_INH_mag, col.regions = "orange") 
 
 ```
-

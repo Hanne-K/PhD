@@ -197,18 +197,6 @@ loc_mDat_mag_buf_50m <- loc_mDat_mag_buf_50m_unfiltered[mag_buf_50m, , op = st_i
 
 ```
 
-
-Summary dataframe for all points within 50 meters from hydropower magasines.
-
-Add magasine info to relevant occurrences
-```{r}
-# Relevant magasine info
-magasin_liste <- c("decimalLatitude","decimalLongitude","elvenavnHierarki","vassdragsnummer","vannkraftverkNavn","vannkraftverkNr","delfeltNr","volumOppdemt_Mm3","magasinFormal_Liste","vatnLnr","magasinNr","hoyesteRegulerteVannstand_moh","lavesteRegulerteVannstand_moh","magasinNavn","magasinArealHRV_km2","status","idriftsattAar")
-
-# Adding the info to all occurrences within the 50 meter buffer
-occ_mDat_mag_50m <- dplyr::inner_join(occurrences_mDat,loc_mDat_mag_buf_50m[magasin_liste], by = c("decimalLatitude","decimalLongitude"))
-```
-
 ### Do we have EPT data?
 
 Found from these publisers: 
@@ -230,8 +218,18 @@ EPT_preparations <- c("ethanol 70%","Alcohol","ethanol 96%","Ethanol (80 %)")
 df_EPT_ethanol <- df_EPT %>% filter(preparations %in% EPT_preparations)
 
 # Where are these?
+```
 
 
+### Summary dataframe for all points within 50 meters from hydropower magasines.
+
+Add magasine info to relevant occurrences
+```{r}
+# Relevant magasine info
+magasin_liste <- c("decimalLatitude","decimalLongitude","elvenavnHierarki","vassdragsnummer","vannkraftverkNavn","vannkraftverkNr","delfeltNr","volumOppdemt_Mm3","magasinFormal_Liste","vatnLnr","magasinNr","hoyesteRegulerteVannstand_moh","lavesteRegulerteVannstand_moh","magasinNavn","magasinArealHRV_km2","status","idriftsattAar")
+
+# Adding the info to all occurrences within the 50 meter buffer
+occ_mDat_mag_50m <- dplyr::inner_join(occurrences_mDat,loc_mDat_mag_buf_50m[magasin_liste], by = c("decimalLatitude","decimalLongitude"))
 ```
 
 Can we find relevant sampling methods?
@@ -244,7 +242,7 @@ df_trial <- occ_mDat_mag_50m %>% filter(samplingProtocol == "")
 
 ```
 
-
+### Make an excel file which summarises the info on a magasine level
 ```{r}
 # Relevant types of magasines
 unique(occ_mDat_mag_50m$magasinFormal_Liste)
@@ -257,49 +255,112 @@ df_summary_mDat_mag_50m <- occ_mDat_mag_50m %>%
   filter(samplingProtocol == "") %>%
   filter(magasinFormal_Liste %in% magasintype_liste) %>%
   group_by(magasinNavn) %>%
-  summarise(idriftsattAar = paste0(unique(idriftsattAar), collapse = ", "),
+  summarise(magasinNr = paste0(unique(magasinNr), collapse = ", "),
+            idriftsattAar = paste0(unique(idriftsattAar), collapse = ", "),
             magasinArealHRV_km2 = paste0(unique(magasinArealHRV_km2), collapse = ", "),
+            hoyesteRegulerteVannstand_moh = paste0(unique(hoyesteRegulerteVannstand_moh), collapse = ", "),
+            lavesteRegulerteVannstand_moh = paste0(unique(lavesteRegulerteVannstand_moh), collapse = ", "),
             magasinFormal_Liste = paste0(unique(magasinFormal_Liste), collapse = ", "),
             vannkraftverkNavn = paste0(unique(vannkraftverkNavn), collapse = ", "),
             vassdragsnummer = paste0(unique(vassdragsnummer), collapse = ", "),
             elvenavnHierarki = paste0(unique(elvenavnHierarki), collapse = ", "),
-            N_samplingevents = length(unique(eventID)),
-            methods = paste0(unique(samplingProtocol), collapse = ", "),
+            publisher = paste0(unique(publisher), collapse = ", "),
+            insititutionCode = paste0(unique(institutionCode), collapse = ", "),
+            collectionCode = paste0(unique(collectionCode), collapse = ", "),
             N_yrs = length(unique(year)),
             years = paste0(unique(year), collapse = ", "),
-            first_year = min(year),
-            last_year = max(year),
+            first_year = min(year,na.rm = TRUE),
+            last_year = max(year,na.rm = TRUE),
             LocatityNames = paste0(unique(locality), collapse = ", "),
-            N_locations = length(unique(locationID))
+            N_locations = length(unique(locationID)),
+            orders = paste0(unique(order), collapse = ", ")
             )
   
+
 library("writexl")
 write_xlsx(df_summary_mag_50m,here::here("data","derived_data","df_summary_mag_50m.xlsx"))
 
-# include only sampling occurrences taken with relevant sampling methods
-unique(occ_INH_mag_50m$samplingProtocol)
+write_xlsx(df_summary_mDat_mag_50m,here::here("data","derived_data","df_summary_mDat_mag_50m_19.12.22.xlsx"))
 
+```
 
+### Make a spatial file 
 
+Summary of points within 50 meters which may be relevant.
+```{r}
 ## Locality dataframe (a bit redundant, could just look at the loc_INH_mag - and double check coordinate crs)
 # Summarizing
-locality_INH_mag <- occ_INH_mag  %>% 
+
+# Create a occurrence subset where unwanted data is filtered away, going from 18807 occrrences to 10251 occurrences
+occ_mDat_mag_50m_filtered <- occ_mDat_mag_50m %>% 
+  dplyr::filter(status == "D") %>%
+  dplyr::filter(samplingProtocol == "") %>%
+  dplyr::filter(magasinFormal_Liste %in% magasintype_liste) 
+  
+  
+# Create a spatial file (when we include the filt above, number of localities drops from 2301 to 1534)
+locations_mDat_50m  <- occ_mDat_mag_50m_filtered  %>% 
   dplyr::group_by(locality,decimalLatitude,decimalLongitude) %>%
   dplyr::summarize(
+    publisher = paste0(unique(publisher), collapse = ", "),
+    institutionCode = paste0(unique(institutionCode), collapse = ", "),
+    collectionCode = paste0(unique(collectionCode), collapse = ", "),
+    basisOfRecord = paste0(unique(basisOfRecord), collapse = ", "),
+    catalogNumber = paste0(unique(catalogNumber), collapse = ", "),
+    habitat = paste0(unique(habitat), collapse = ", "),
     N_samplingEvents = length(unique(eventID)),
-    N_taxa = length(unique(scientificName)), # change to taxonKey?
+    N_taxa = length(unique(scientificName)),
+    orders = paste0(unique(order), collapse = ", "),
     N_individuals = sum(individualCount),
-    N_methods = length(unique(samplingProtocol)),
-    methods = paste0(unique(samplingProtocol), collapse = ", "),
     N_yrs = length(unique(year)),
     years = paste0(unique(year), collapse = ", "),
-    first_year = min(year),
-    last_year = max(year),
+    first_year = min(year, na.rm = TRUE),
+    last_year = max(year, na.rm = TRUE),
     period_yrs = (last_year - first_year),
     N_months = length(unique(month)),
     months = paste0(unique(month), collapse = ", "),
     locationIDs = paste(unique(locationID), collapse=", "),
     field_number = paste0(unique(fieldNumber), collapse = ", "))
+
+# Make dataframe
+locations_mDat_50m <- as.data.frame(locations_mDat_50m) 
+
+## Make location data-frame a spatial object 
+locations_mDat_50m_sf <- st_as_sf(locations_mDat_50m, coords = c("decimalLongitude","decimalLatitude"), crs = 4326, remove = FALSE)
+# Create a version with projected coordinates
+locations_mDat_50m_sf_P <- sf::st_transform(locations_mDat_50m_sf, 32633)
+    
 ```
 
+Inspect
+```{r}
+
+mapview(locations_mDat_50m_sf_P, col.regions = "orange") + mapview(magasin_sf_P,col.regions = "blue", alpha.regions = 0.5)
+```
+
+### Dataset summary
+What datasets contain the highest number of relevant datasets? Within 50m from hydropower magasines.
+```{r}
+
+df_datasets_mag_50m <- occ_mDat_mag_50m %>% 
+  filter(status == "D") %>%
+  filter(samplingProtocol == "") %>%
+  filter(magasinFormal_Liste %in% magasintype_liste) %>%
+  group_by(institutionCode) %>%
+  summarise(N_occurrences = length(unique(occurrenceID)),
+            N_yrs = length(unique(year)),
+            years = paste0(unique(year), collapse = ", "),
+            first_year = min(year, na.rm = TRUE),
+            last_year = max(year, na.rm = TRUE),
+            orders = paste0(unique(order), collapse = ", "),
+            magasinNavn = paste0(unique(magasinNavn), collapse = ", "),
+            publisher = paste0(unique(publisher), collapse = ", "),
+            collectionCode = paste0(unique(collectionCode), collapse = ", "),
+            )
+
+
+  
+write_xlsx(df_datasets_mag_50m,here::here("data","derived_data","df_datasets_mag_50m_19.12.22.xlsx"))
+
+```
 

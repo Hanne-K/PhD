@@ -149,7 +149,7 @@ st_crs(loc_mDat_sf)
 
 ################################
 
-Want to attach info from the overlapping polygon to the point, allowing us to sum up info on number of points etc per hydropower magasine. 
+Want to attach info from the overlapping polygon to the point, allowing us to sum up info on number of points etc per hydropower magazine. 
 
 Within magasine polygons
 ```{r within magasines}
